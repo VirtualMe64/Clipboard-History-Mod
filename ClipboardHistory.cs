@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Text;
 using BepInEx;
 using BepInEx.Logging;
 using BepInEx.Configuration;
@@ -17,9 +18,12 @@ namespace ClipboardHistory
     public class ClipboardHistory: PolyTechMod
     {
         public static ConfigEntry<bool> mEnabled;
+        public static ConfigEntry<bool> mGlobalHistory;
         public static ConfigEntry<int> maxHistorySize;
         public static ConfigEntry<BepInEx.Configuration.KeyboardShortcut> keybindHistoryBack;
         public static ConfigEntry<BepInEx.Configuration.KeyboardShortcut> keybindHistoryForward;   
+        public static ConfigEntry<string> global_saved_edges;
+        public static ConfigEntry<string> global_saved_joints;
 
         public static List<List<ClipboardEdge>> saved_Edges;
         public static List<List<ClipboardJoint>> saved_Joints;
@@ -29,9 +33,12 @@ namespace ClipboardHistory
 
         public ClipboardHistory() {
             Config.Bind(mEnabledDefinition, true, new ConfigDescription("Controls if the mod should be enabled or disabled", null, null));
-            maxHistorySize = Config.Bind(new ConfigDefinition("Max History Size", "Default 20"), 20);
-            keybindHistoryBack = Config.Bind(new ConfigDefinition("History Back", "Reverse clipboard history"), new BepInEx.Configuration.KeyboardShortcut(UnityEngine.KeyCode.J));
-            keybindHistoryForward = Config.Bind(new ConfigDefinition("History Forward", "Advance clipboad history"), new BepInEx.Configuration.KeyboardShortcut(UnityEngine.KeyCode.U));
+            keybindHistoryForward = Config.Bind(new ConfigDefinition("History Controls", "Advance clipboad history"), new BepInEx.Configuration.KeyboardShortcut(UnityEngine.KeyCode.U));
+            keybindHistoryBack = Config.Bind(new ConfigDefinition("History Controls", "Reverse clipboard history"), new BepInEx.Configuration.KeyboardShortcut(UnityEngine.KeyCode.J));
+            maxHistorySize = Config.Bind(new ConfigDefinition("History Settings", "Max history size"), 20);
+            mGlobalHistory = Config.Bind(new ConfigDefinition("History Settings", "Enable cross-level history"), false);
+            global_saved_edges = Config.Bind(new ConfigDefinition("Global Data", "Edges"), "");
+            global_saved_joints = Config.Bind(new ConfigDefinition("Global Data", "Joints"), "");
         }
 
         void Awake()
@@ -46,7 +53,12 @@ namespace ClipboardHistory
 
             saved_Edges = new List<List<ClipboardEdge>>();
             saved_Joints = new List<List<ClipboardJoint>>();
+
             clipboard_History_Index = 0;
+
+            if (mGlobalHistory.Value) {
+                loadSavedClipboard();
+            }
 
             // Register the mod to PTF, that way it will be able to be configured using PTF ingame.
             PolyTechMain.registerMod(this);
@@ -65,6 +77,69 @@ namespace ClipboardHistory
             mEnabled.Value = false;
         }
 
+        public void loadSavedClipboard() {
+            string edgesStr = global_saved_edges.Value;
+            string jointsStr = global_saved_joints.Value;
+            List<BridgeEdge> edgeList = new List<BridgeEdge>();
+            List<BridgeJoint> jointList = new List<BridgeJoint>();             
+            int offset = 0;
+            bool saved = false;
+            if (edgesStr != "") {
+                List<byte[]> byteLists = stringToBytes(edgesStr);
+                foreach (byte[] bytelist in byteLists) {
+                    BridgeEdgeProxy edgeProxy = new BridgeEdgeProxy(bytelist, ref offset);
+                    BridgeEdge edge = BridgeEdges.CreateEdgeFromProxy(edgeProxy);
+                    edgeList.Add(edge);
+                }
+                saved = true;
+            }
+            if (jointsStr != "") {
+                List<byte[]> byteLists = stringToBytes(jointsStr);
+                    foreach (byte[] bytelist in byteLists) {
+                    BridgeJointProxy jointProxy = new BridgeJointProxy(1, bytelist, ref offset);
+                    BridgeJoint joint = BridgeJoints.CreateJointFromProxy(jointProxy);
+                    jointList.Add(joint);
+                }
+                saved = true;
+            }
+            if (saved) {
+                CopyToClipboard(jointList, edgeList);
+                updateEdges(ClipboardManager.GetEdges());
+                updateJoints(ClipboardManager.GetJoints());
+                ClipboardManager.ClearClipboard();
+            }            
+        }
+
+        // Converts string of bytes into a list of bytes lists
+        // Used for permanent storage of the serialization of the edges
+        // edgebytes-----edgebytes-----edgebytes
+        // bytebytebyte-----bytebytebytebyte-----bytebytebyte
+        private static List<byte[]> stringToBytes(string byteText) {
+            string[] components = byteText.Split(new String[] {"-----"}, StringSplitOptions.None);
+            List<byte[]> outList = new List<byte[]>();
+            foreach (string currString in components) {
+                var bytes = Encoding.Unicode.GetBytes(currString);
+                outList.Add(bytes);
+            }
+            return outList;
+        }
+
+        // Returns list of byte lists (edges) to the final saved string
+        private static string byteListsToString(List<byte[]> byteLists) {
+            bool first = true;
+            StringBuilder outString = new StringBuilder();
+            foreach(byte[] byteList in byteLists) {
+                string prefix = first ? "" : "-----";
+                outString.Append(prefix + bytesToString(byteList));
+                first = false;
+            }
+            return outString.ToString();
+        }
+
+        private static string bytesToString(byte[] byteList) {
+            return string.Join("", Encoding.ASCII.GetChars(byteList));
+        }
+
         // I have no idea how either of this functions work,
         // so just talk to MoonlitJolty if you wanna know what to do this this.
         // This returns a stringified version of the current mod settings.
@@ -78,6 +153,9 @@ namespace ClipboardHistory
                 listClone.Add(edge);
             }
             saved_Edges.Add(listClone);
+            if (saved_Edges.Count > maxHistorySize.Value) {
+                saved_Edges.RemoveAt(0);
+            }
         }
 
         private static void updateJoints(List<ClipboardJoint> newJoints) {
@@ -86,6 +164,9 @@ namespace ClipboardHistory
                 listClone.Add(joint);
             }
             saved_Joints.Add(listClone);
+            if (saved_Joints.Count > maxHistorySize.Value) {
+                saved_Joints.RemoveAt(0);
+            }            
         }
 
         // Helper method for CopyToClipboard
@@ -174,18 +255,29 @@ namespace ClipboardHistory
             if (mEnabled.Value) {
                 updateEdges(ClipboardManager.GetEdges());
                 updateJoints(ClipboardManager.GetJoints());
-                if (saved_Edges.Count > maxHistorySize.Value) {
-                    saved_Edges.RemoveAt(0);
-                    saved_Joints.RemoveAt(0);
-                }
                 clipboard_History_Index = saved_Edges.Count;
+                if (mGlobalHistory.Value) {
+                    List<byte[]> edgeByteLists = new List<byte[]>();
+                    foreach(ClipboardEdge edge in ClipboardManager.GetEdges()) {
+                        byte[] bytes = new BridgeEdgeProxy(edge.m_SourceBridgeEdge).SerializeBinary();
+                        edgeByteLists.Add(bytes);
+                    }
+                    global_saved_edges.Value = byteListsToString(edgeByteLists);
+
+                    List<byte[]> jointByteLists = new List<byte[]>();
+                    foreach(ClipboardJoint joint in ClipboardManager.GetJoints()) {
+                        byte[] bytes = new BridgeJointProxy(joint.m_SourceBridgeJoint).SerializeBinary();
+                        jointByteLists.Add(bytes);
+                    }
+                    global_saved_joints.Value = byteListsToString(jointByteLists);
+                }
             }
         }
 
         [HarmonyPatch(typeof(GameStateCommonInput), "DoKeyboardProcessing")]
         [HarmonyPostfix]
         private static void saveOnKey() {
-            if (mEnabled.Value) {
+            if (mEnabled.Value && GameStateManager.GetState() == GameState.BUILD) {
                 if (keybindHistoryForward.Value.IsDown()) {
                     if (clipboard_History_Index < saved_Edges.Count - 1) clipboard_History_Index += 1;
                     updateClipboard();
