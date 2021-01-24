@@ -9,7 +9,7 @@ using PolyTechFramework;
 
 namespace ClipboardHistory
 {
-    [BepInPlugin("org.bepinex.plugins.clipboardhistory", "Clipboard History Mod", "1.0.0")]
+    [BepInPlugin("org.bepinex.plugins.clipboardhistory", "Clipboard History Mod", "1.0.1")]
     // Specify the mod as a dependency of PTF
     [BepInDependency(PolyTechMain.PluginGuid, BepInDependency.DependencyFlags.HardDependency)]
     // This Changes from BaseUnityPlugin to PolyTechMod.
@@ -29,9 +29,12 @@ namespace ClipboardHistory
 
         public ClipboardHistory() {
             Config.Bind(mEnabledDefinition, true, new ConfigDescription("Controls if the mod should be enabled or disabled", null, null));
-            maxHistorySize = Config.Bind(new ConfigDefinition("Max History Size", "Default 20"), 20);
-            keybindHistoryBack = Config.Bind(new ConfigDefinition("History Back", "Reverse clipboard history"), new BepInEx.Configuration.KeyboardShortcut(UnityEngine.KeyCode.J));
-            keybindHistoryForward = Config.Bind(new ConfigDefinition("History Forward", "Advance clipboad history"), new BepInEx.Configuration.KeyboardShortcut(UnityEngine.KeyCode.U));
+            keybindHistoryForward = Config.Bind(new ConfigDefinition("History Settings", "History Forward"), new BepInEx.Configuration.KeyboardShortcut(UnityEngine.KeyCode.U),
+                                                new ConfigDescription("", null, new ConfigurationManagerAttributes { Order = 2 }));            
+            keybindHistoryBack = Config.Bind(new ConfigDefinition("History Settings", "History Back"), new BepInEx.Configuration.KeyboardShortcut(UnityEngine.KeyCode.J),
+                                             new ConfigDescription("", null, new ConfigurationManagerAttributes { Order = 1 }));
+            maxHistorySize = Config.Bind(new ConfigDefinition("History Settings", "Max History Size"), 20, 
+                                         new ConfigDescription("", null, new ConfigurationManagerAttributes { Order = 0 }));            
         }
 
         void Awake()
@@ -71,7 +74,8 @@ namespace ClipboardHistory
         public override string getSettings() { return ""; }
         // This takes a stringified version of the mod settings and updates the settings to that.
         public override void setSettings(string settings) {}
-
+        
+        // Add list of bridge edges to clipboard history
         private static void updateEdges(List<ClipboardEdge> newEdges) {
             List<ClipboardEdge> listClone = new List<ClipboardEdge>();
             foreach (ClipboardEdge edge in newEdges) {
@@ -80,6 +84,7 @@ namespace ClipboardHistory
             saved_Edges.Add(listClone);
         }
 
+        // Add list of bridge joints to clipboard history
         private static void updateJoints(List<ClipboardJoint> newJoints) {
             List<ClipboardJoint> listClone = new List<ClipboardJoint>();
             foreach (ClipboardJoint joint in newJoints) {
@@ -112,7 +117,7 @@ namespace ClipboardHistory
             return Utils.V3toV2(GameUI.SnapPosToGrid(new Vector3(num / (float)num3, num2 / (float)num3, Cameras.MainCamera().transform.position.z + 1f)));
         }
 
-        // Hopefully converts list of clipboardEdge to bridgeEdge
+        // Converts list of clipboardEdge to bridgeEdge
         private static List<BridgeEdge> clipboardEdgeToBridgeEdge(List<ClipboardEdge> edges) {
             List<BridgeEdge> list = new List<BridgeEdge>();
             foreach (ClipboardEdge edge in edges) {
@@ -121,7 +126,7 @@ namespace ClipboardHistory
             return list;
         }
 
-        // Hopefully converts list of clipboardJoing to bridgeJoint
+        // Converts list of clipboardJoing to bridgeJoint
         private static List<BridgeJoint> clipboardJointToBridgeJoint(List<ClipboardJoint> joints) {
             List<BridgeJoint> list = new List<BridgeJoint>();
             foreach (ClipboardJoint joint in joints) {
@@ -160,6 +165,7 @@ namespace ClipboardHistory
             }
         }
 
+        // Takes the selected index in the saved history and adds it to the in game clipboard
         private static void updateClipboard() {
             List<ClipboardEdge> clipboardEdges = saved_Edges[clipboard_History_Index];
             List<ClipboardJoint> clipboardJoints = saved_Joints[clipboard_History_Index];
@@ -168,6 +174,7 @@ namespace ClipboardHistory
             CopyToClipboard(joints, edges);
         }
 
+        // Patch to automatically update saved history whenever a selection is copied
         [HarmonyPatch(typeof(BridgeSelectionSet), "CopySelectionSet")]
         [HarmonyPostfix]
         private static void updateHistory() {
@@ -182,10 +189,11 @@ namespace ClipboardHistory
             }
         }
 
+        // Adds basic controls to navigate clipboard history
         [HarmonyPatch(typeof(GameStateCommonInput), "DoKeyboardProcessing")]
         [HarmonyPostfix]
         private static void saveOnKey() {
-            if (mEnabled.Value) {
+            if (mEnabled.Value && GameStateManager.GetState() == GameState.BUILD) {
                 if (keybindHistoryForward.Value.IsDown()) {
                     if (clipboard_History_Index < saved_Edges.Count - 1) clipboard_History_Index += 1;
                     updateClipboard();
@@ -196,6 +204,5 @@ namespace ClipboardHistory
                 }
             }
         }
-        
     }
 }
